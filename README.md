@@ -14,6 +14,6 @@ The car will be controlled by Arduino Nanos and a Teensy 3.5. It has a very fast
 
 ## Steering Control
 
-The goal of steering control is to ensure that the angle of the front wheels with respect to the car frame is controlled correctly. The most basic form of this is sending commands to a servo to orient the front wheels. The next level would be to implement a PID loop which uses IMU or other orientation sensor data to control the angles.
+The goal of steering control is to ensure that the angle of the front wheels with respect to the car frame is controlled correctly. The most basic form of this is sending commands to a servo to orient the front wheels. The next level would be to implement a PID loop which uses IMU or other orientation sensor data to control the angles. There will be a dedicated Arduino for the steering of the front wheels.
 
 The steering commands can be sent by an N64 controller, some other type of controller, or by the main microcontroller (Teensy 3.5) directly. 
