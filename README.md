@@ -14,6 +14,6 @@ The car will be controlled by Arduino Nanos and a Teensy 3.5. It has a very fast
 
 ## Communications
 
-The main microcontroller is Teensy 3.5. Code can be developed for it almost exactly the same as for Arduino boards, except one needs to install [Teensyduino](https://www.pjrc.com/teensy/td_download.html). The instructions are very straightforward, though sometimes one of the steps in the installation wizard gets stuck and you need to do some googling.
+The main microcontroller is Teensy 3.5. Code can be developed for it almost exactly the same as for Arduino boards, except one needs to [install Teensyduino](https://www.pjrc.com/teensy/td_download.html). The instructions are very straightforward, though sometimes one of the steps in the installation wizard gets stuck and you need to do some googling.
 
 The Teensy 3.5 will relay commands from the remote controller to all of the other onboard microcontroller units. It will also send data from the front wheels to the back wheels and vice versa.
