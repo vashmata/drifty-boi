@@ -16,8 +16,6 @@ volatile int servo_tacho2;*/
 
 void traction_control(); // code for control system
 
-//void setup_ADC(); // copied from gordon's code
-
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600); // arduino standard
@@ -29,53 +27,23 @@ void setup() {
 
   delay(10000); // wait 10 s
 
-//  setup_ADC();
-
   while (1) traction_control();
 
   delay(1000);
   exit(0); // exit without using loop
 }
 
-
 void traction_control(){
-  // write code
-
-  /*int n, k; // values for analog value collection
-  unsigned long int sum; // large value
-  float input_A0, voltage_A0; // analog values
-  const float ADC_to_V = 1.0/1023.0*5;
-  
-  n = 100;
-  sum = 0;
-  for(i=0;i<n;i++) {
-
-    ADCSRA |= BIT(ADSC); // ADC start conversion
-    // BIT(ADSC) will read as 1 when a conversion is in process
-    // and turn to 0 when complete  
-    
-    // block / wait until ADC conversion is complete
-    k = 0;
-    while( ADCSRA & BIT(ADSC) ) k++; 
-  
-    // read the ADC (10-bits) // 0 - 1023
-    sum += ADC;
-  }
-
-  input_A0 = (float)sum / n; // average analog input
-  voltage_A0 = input_A0*ADC_to_V;*/
-
-  float tractionChange; // for tacho feedback averaging
-  float backVel, frontVel; // vel. of back wheel + front
-  float y, rmax, rmin, r; // slip ratio, real and desired, + erorr
-  float kp, kd, ki; // controller gains
-  float e, ed; //error for controllers
-  float u; // modifies speed and sends a value to speed control
-  unsigned long int t, dt; // time values for derivative
+  static float tractionChange; // for tacho feedback averaging
+  static float backVel, frontVel; // vel. of back wheel + front
+  static float y, rmax, rmin, r; // slip ratio, real and desired, + erorr
+  static float kp, kd, ki; // controller gains
+  static float e, ed; //error for controllers
+  static float u; // modifies speed and sends a value to speed control
+  static unsigned long int t, dt; // time values for derivative
   static unsigned long int tp = micros(); // values conserved for multiple loops
   static float ep = 0.0, ei = 0.0;
-  float T; // period: time it takes to do one loop
-
+  static float T; // period: time it takes to do one loop
   
   kp = 5.0; // Find limit value for stability
   kd = 0.0; // assign value after kp is set. Should be large
@@ -94,40 +62,16 @@ void traction_control(){
   if ((abs(y) < rmin) | (abs(y) > rmax)) tractionChange = 1; // traction control only active if beyond range
   else tractionChange = 0;
   
+  t = micros(); dt = t - tp;
+
   e = r - y;
-
   ei += e*T;
-  
-  t = micros();
-  dt = t - tp;
-
   ed = (e-ep)/dt;
-  
   u = (kp*e + kd*ed)*tractionChange + ki*ei;
   //value sent to speed control to modify speed. ki should always be active
-
   tp = t;
   ep = e;
 }
-
-
-/*void setup_ADC(){
-  cli();
-
-  ADMUX= 0; // A0 is default
-
-  ADMUX |= BIT(REFS0); // reference voltage of 5V
-
-  ADCSRA = 0;
-
-  ADCSRA |= BIT(ADEN); // enable ADC
-
-  ADCSRA |= BIT(ADPS0) | BIT(ADPS1) | BIT(ADPS2)
-  // 128 prescaler
-
-  sei();
-}*/
-
 
 void loop() {
   // ignore
