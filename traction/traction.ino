@@ -10,9 +10,9 @@
 const int speedy = 5; // set dc motor output to 5
 Servo sp_servo; // dc motor
 
-volatile int DC_tacho; // speed tacho feedback
+/*volatile int DC_tacho; // speed tacho feedback
 volatile int servo_tacho1;
-volatile int servo_tacho2;
+volatile int servo_tacho2;*/
 
 void traction_control(); // code for control system
 
@@ -71,22 +71,35 @@ void traction_control(){
   float kp, kd, ki; // controller gains
   float e, ed, ei; //error for controllers
   float u; // modifies speed and sends a value to speed control
+  unsigned long int t, dt; // time values for derivative
+  static unsigned long int tp = micros(), ep = 0; // static values from previoujs loop
 
+  
   kp = 5.0; // Find limit value for stability
+  kd = 0.0; // assign value after kp is set
 
-  rmin = 0.1;
+  rmin = 0.1; // range of values for acceptable slip
   rmax = 0.5;
 
-  r = (rmin + rmax)/2;
+  r = (rmin + rmax)/2; // average slip ratio to aim for
   
   if (backVel >= frontVel) y = (backVel-frontVel)/backVel; // traction
   else y = (backVel-frontVel)/frontVel; r = -r; // braking
   
-  if ((abs(y) < rmin) | (abs(y) > rmax)) tractionChange = 1;
+  if ((abs(y) < rmin) | (abs(y) > rmax)) tractionChange = 1; // traction control only active if beyond range
   else tractionChange = 0;
   
   e = r - y;
-  u = kp*e*tractionChange;
+  
+  t = micros();
+  dt = t - tp;
+
+  ed = (e-ep)/dt;
+  
+  u = (kp*e + kd*ed)*tractionChange; // value sent to speed control to modify actual speed
+
+  tp = t;
+  ep = e;
 }
 
 
