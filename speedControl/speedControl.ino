@@ -44,6 +44,7 @@ const float A_TO_V = VOLTAGE_5v_CONST / 1024.0;
 /* motor information */
 #define DRIVE_STOP 1500
 #define DRIVE_OFFSET 100
+#define PID_PERIOD 20 // 20ms
 float speedMultiplier = 1;
 
 /* battery information */
@@ -54,7 +55,7 @@ const float V_bat_inv = 1 / V_bat;
 /* timing */
 unsigned long prevPrint = millis(); // for serial printing periodic data
 unsigned long prevAnalogRead = micros(); // for tach averaging filter
-
+unsigned long prevPID = millis();
 /* tachometer calculations */
 float driveTachResting; // analogRead values when wheels aren't turning
 float driveTachVolts; // analogRead values in real time
@@ -64,9 +65,9 @@ int n = 0; // counter for averaging filter, counts up to AVERAGING_COUNTS
 
 /* speed control */
 Servo drive;
-const float dt = 0.014; // fine to pick a constant value as long as you control it with timers
+const float dt = 0.020; // fine to pick a constant value as long as you control it with timers
 const float dtInv = 1 / dt;
-float kp = 1.0; // proportional controller gain, 40% FOS to protect against
+float kp = 0.2; // proportional controller gain, 40% FOS to protect against
 float ki = 0; // I controller
 float kd = 0; // D controller
 
@@ -102,6 +103,7 @@ void setup() {
   Serial.print(F("Drive shaft average resting value: \t"));
   Serial.println(driveTachResting, 3);
 
+  prevPID = millis();
   prevPrint = millis();
 }
 
@@ -138,8 +140,11 @@ void loop() {
   /* PID control */
   static int driveSpeed = DRIVE_STOP;
   static float outputVolts = 0;
-  driveSpeed = updatePID(driveTachVolts, desiredVolts);
-  drive.writeMicroseconds(driveSpeed);
+  if (millis() - prevPID > PID_PERIOD) {
+    driveSpeed = updatePID(driveTachVolts, desiredVolts);
+    drive.writeMicroseconds(driveSpeed);
+    prevPID = millis();
+  }
 
   /* return comms */
   if (millis() - prevPrint > PRINT_PERIOD) {
@@ -172,7 +177,7 @@ int updatePID(float desiredVolts, float currentVolts) {
   t = millis();
   dt = t - tp;
   error = desiredVolts - currentVolts; // controller error, uses tach voltages
-  if(fabs(error) < 0.01) error = 0;
+  if (fabs(error) < 0.01) error = 0;
   pTerm = kp * error; // proportional error
   iTerm += 0.5 * (error + prevError) * dt; // integral of the error
   dTerm = (error - prevError) * dtInv; // derivative of error
