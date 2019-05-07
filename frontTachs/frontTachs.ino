@@ -1,18 +1,4 @@
-#define LEFT_TACH A7
-#define RIGHT_TACH A6
-#define PRINT_PERIOD 100
-
-unsigned long prevPrint = millis(); // for serial printing periodic data
-
-float leftTachResting, rightTachResting; // analogRead values when wheels aren't turning
-int leftTachInt, rightTachInt;
-float leftTachVal, rightTachVal; // analogRead values in real time
-float leftTachSpeed, rightTachSpeed;
-int n = 0;
-
-unsigned long prevAnalogRead = micros(); // for tach averaging filter
-unsigned long leftTachSum, rightTachSum;
-
+/* tachometer calculations */
 #define VOLTAGE_3v3_CONST 3.57
 //#define VOLTAGE_5v_CONST 4.64
 // voltage divider was measured to give 2.31 volts which matches calibration below, so it's not defined here
@@ -25,6 +11,26 @@ unsigned long leftTachSum, rightTachSum;
 
 #define AVERAGING_COUNTS 100
 #define AVERAGING_COUNTS_INV 0.01 // 1/100
+
+/* pin information */
+#define LEFT_TACH A7
+#define RIGHT_TACH A6
+
+/* comms information */
+#define PRINT_PERIOD 100
+#define BAUD_RATE 9600
+#define SERIAL_TIMEOUT 20
+
+/* timing */
+unsigned long prevPrint = millis(); // for serial printing periodic data
+unsigned long prevAnalogRead = micros(); // for tach averaging filter
+
+/* tachometer calculations */
+float leftTachResting, rightTachResting; // analogRead values when wheels aren't turning
+float leftTachVolts, rightTachVolts; // analogRead values in real time
+float leftTachSpeed, rightTachSpeed; // volts converted to speed with motor relationship
+unsigned long leftTachSum, rightTachSum; // sum of analogRead values, gets divided by AVERAGING_COUNTS to get the average
+int n = 0; // counter for averaging filter, counts up to AVERAGING_COUNTS
 
 void setup() {
   /* pins setup */
@@ -53,8 +59,7 @@ void setup() {
   Serial.print(F("Front right wheel average resting value: \t"));
   Serial.println(rightTachResting,3);
   
-  leftTachSum = 0; rightTachSum = 0;
-  prevAnalogRead = micros(); n = 0;
+  leftTachSum = 0; rightTachSum = 0; prevAnalogRead = micros(); n = 0;
 }
 
 void loop() {
@@ -70,8 +75,7 @@ void loop() {
   else {
     leftTachVal = (float)leftTachSum*A_TO_V*AVERAGING_COUNTS_INV - leftTachResting;
     rightTachVal = (float)rightTachSum*A_TO_V*AVERAGING_COUNTS_INV - rightTachResting;
-    leftTachSum = 0; rightTachSum = 0;
-    n = 0;
+    leftTachSum = 0; rightTachSum = 0; n = 0;
   }
 
   /* comms */
