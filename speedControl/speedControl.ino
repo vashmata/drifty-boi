@@ -18,46 +18,140 @@
 #include<avr/interrupt.h>
 #define BIT(a) (1 << (a))
 
-Servo servo1;
-const byte speed_pin=A3;
-const byte tacho_pin=A0;
-int motorspeed=1500; //intial esc setting for neutral, can be changed through this variable
-int startme=0;
+/* tachometer calculations */
+#define VOLTAGE_3v3_CONST 3.57
+//#define VOLTAGE_5v_CONST 4.64
+// voltage divider was measured to give 2.31 volts which matches calibration below, so it's not defined here
+
+#ifdef VOLTAGE_3v3_CONST
+const float A_TO_V = VOLTAGE_3v3_CONST/1024.0;
+#elif defined(VOLTAGE_5v_CONST)
+const float A_TO_V = VOLTAGE_5v_CONST/1024.0;
+#endif
+
+#define AVERAGING_COUNTS 100
+#define AVERAGING_COUNTS_INV 0.01 // 1/100
+
+/* pin information */
+#define DRIVE_PWM 5
+#define DRIVE_TACH A6
+
+/* comms information */
+#define PRINT_PERIOD 100
+#define BAUD_RATE 9600
+#define SERIAL_TIMEOUT 20
+
+/* motor information */
+#define DRIVE_STOP 1500
+#define DRIVE_OFFSET 300
+
+/* timing */
+unsigned long prevPrint = millis(); // for serial printing periodic data
+unsigned long prevAnalogRead = micros(); // for tach averaging filter
+
+/* tachometer calculations */
+float driveTachResting; // analogRead values when wheels aren't turning
+float driveTachVolts; // analogRead values in real time
+float driveTachSpeed; // volts converted to speed with motor relationship
+unsigned long driveTachSum; // sum of analogRead values, gets divided by AVERAGING_COUNTS to get the average
+int n = 0; // counter for averaging filter, counts up to AVERAGING_COUNTS
+
+/* speed control */
+Servo drive;
+int driveSpeed = DRIVE_STOP; //intial esc setting for neutral, can be changed through this variable
+int startTime = 0; // what's this?
 volatile float r=0.1; //voltage output from tachometer preset, we actually want ~0.056 for 1m/s
-volatile int rpm=1; //desired rpm for the car
-volatile int Tacho_vin=0.056; //using just to initialize the variable
+volatile int desiredSpeed; //desired rpm for the car
+float kp = 5.0; // proportional controller gain, 40% FOS to protect against
+  // mainly modelling uncertainty and different motors
+  //kp = 7.0; // ultimate limit, kp = 8 oscillates -> unstable / marginal
+float ki = 0.0; // I controller
+float kd = 0.0; // D controller
 
-void task1();
+/* timing */
+unsigned long prevPrint = millis(); // for serial printing periodic data
+unsigned long prevAnalogRead = micros(); // for tach averaging filter
 
-void setup_ADC();
+/* tachometer calculations */
+float driveTachResting; // analogRead values when wheels aren't turning
+float driveTachVolts; // analogRead values in real time
+float driveTachSpeed; // volts converted to speed with motor relationship
+unsigned long driveTachSum; // sum of analogRead values, gets divided by AVERAGING_COUNTS to get the average
+int n = 0; // counter for averaging filter, counts up to AVERAGING_COUNTS
 
-unsigned long int t0;
+//void task1();
+//void setup_ADC();
 
 void setup() {
-  // put your setup code here, to run once:
-  Serial.begin(115200);
+  /* comms setup */
+  Serial.begin(BAUD_RATE); Serial.setTimeout(SERIAL_TIMEOUT);
+  Serial.println(F("Front Nano has booted up."));
 
-  Serial.print("\nturn on ESC now\n");
+  Serial.println("Turn on ESC now");
+  drive.attach(DRIVE_PWM);
+  drive.writeMicroseconds(DRIVE_STOP);
+  delay(10000); //wait 10s for ESC to turn on/calibrate
 
-  servo1.attach(speed_pin);
-  servo1.writeMicroseconds(motorspeed); //This is where you want to set at neutral aka 1500 and than determine the range by percentage from lets say 1500 to 1800. depending on the lab results
-  //could run it slowly at 1550 that is for sure.
-  //gordon suggest max = 1500 + 300 = 1800 && min = 1500 - 300 = 1200
+  /* pins setup */
+  //setup_ADC();
+  pinMode(DRIVE_TACH, INPUT);
+  analogReference(EXTERNAL);
+
+  /* tachometer calibration */
+  Serial.println(F("Calibrating drive tachometer"));
+  prevAnalogRead = micros(); n = 0;
+  while (n < AVERAGING_COUNTS) {
+    if (micros() - prevAnalogRead > 200){
+      n++;
+      driveTachSum += analogRead(DRIVE_TACH);
+      prevAnalogRead = micros();
+    }
+  }
+  driveTachResting = A_TO_V * (float)driveTachSum / (float)n;
+  Serial.print(F("Drive shaft average resting value: \t"));
+  Serial.println(driveTachResting,3);
   
-  delay(1000); //wait 10s for ESC to turn on/calibrate
+  driveTachSum = 0; prevAnalogRead = micros(); n = 0;
+  prevPrint = millis();
+  
+  //while(1) task1();
 
-  setup_ADC();
+  //delay(1000);
+  //exit(0);
+}
 
-  t0=micros();
+void loop() {
+  /* tach value averaging */
+    if (n < AVERAGING_COUNTS) {
+      if (micros() - prevAnalogRead > 200){
+        n++;
+        driveTachSum += analogRead(DRIVE_TACH);
+        prevAnalogRead = micros();
+      }
+    }
+    else {
+      driveTachVolts = (float)driveTachSum*A_TO_V*AVERAGING_COUNTS_INV - driveTachResting;
+      driveTachSum = 0; n = 0;
+    }
 
-  while(1) task1();
+    /* comms */
+    if (millis() - prevPrint > PRINT_PERIOD) {
 
-  delay(1000);
-  exit(0);
+      // ignore deadband (but this is kinda inaccurate...)
+      // maybe we should readjust this stuff becasue the above function may be off
+      driveTachSpeed = driveTachVolts*4935.9 + 17.598;
+      if (fabs(driveTachSpeed) <= 30) driveTachSpeed = 0;
+      
+      // beware that right now the front wheels are flipped cuz i was lazy
+      Serial.print(F("Drive shaft: "));
+      Serial.print(driveTachVolts,3); Serial.print(" V\t");
+      Serial.println(driveTachSpeed); Serial.print(" RPM\t");
+
+      prevPrint = millis();
+    }
 }
 
 void task1(){
-
   int i, n;
   float input_A0, voltage_A0;
   unsigned long int t, t1, dt, k, sum;
@@ -74,175 +168,63 @@ void task1(){
   const float V_bat = 11.5;
   const float V_bat_inv = 1/V_bat;
 
-  // Testing procedure for control software
-  // A) open loop testing -> verify sensors, actuators, units, saturation,
-  // input polarity (u and y same direction for steady-state),
-  // sample rate (ie dt), noise reduction filter, etc.
-  // B) closed loop testing for small kp, u_max -> less chance of instability
-  // C) optimize performance by tuning kp, umax, dt, etc.
-  
-  // step 0) read the clock to measure the time
-  // -> needed for plotting and maybe to calculate r(t) 
-
-  t1 = micros()- t0;
-
-  // step 1) read / filter the sensor / output y ///////////
-
-  n=100;
-  sum=0;
+  n=100; sum=0; unsigned long beforeADC = micros();
   for(i=0; i<n; i++){
-
     ADCSRA |= BIT(ADSC); //ADC start conversion
     //BIT(ADSC) will read as 1 when a conversion is in process
     //and turn to 0 when complete
-    //block / wait until ADC conversion is complete
-
-    k=0;
-    while(ADCSRA & BIT(ADSC)) k++;
-
-    //read the ADC (10-bits) // 0 - 1023
+    while(ADCSRA & BIT(ADSC)) ;
     sum += ADC;
-
-    // sum += analogRead(A0);
   }
-
   input_A0 = (float)sum/n; //average analog input
-  // note that the simple division of float below takes around 40 
-  // us compared to around 4 us for equivalent multiplication
-  // which adds a significant time to ADC conversion (112 us vs 152 us).
-  // -> avoid using float division if possible
-  // -> use multiplication instead of division when possible
-  // -> avoid putting float division in loops
-  //  voltage_A0 = input_A0 / 1023.0 * 5;
   voltage_A0 = input_A0 * ADC_to_V; //this is much faster than / above
-
-  //current time (us)
-  t= micros()- t0;
+  unsigned long conversionTime = micros() - beforeADC;
 
   // set output y
   //in some cases a change of units / scaling may be required
   //in this case V is good since it has a good physical meaning
   //related to the tach/motor model
-  y=voltage_A0; //read output
+  currentVolts=voltage_A0; //read output
 
   //note tach voltage is directly propertional to tach speed
   //-> related to car speed / wheel speed / drive belt speed
-  //-> because there is essentially no currentin the tach
-  // since the ADC has a very high input resistance (> 100k Ohm)
-  // -> the tach is an open circuit
-
-  // length of ADC interval (us)
-  dt = t - t1; // for adjusting / optimizing the sensor filter
-
+  
   // step 2) calculate the control input////
 
-  kp = 5.0; // proportional controller gain, 40% FOS to protect against
-  // mainly modelling uncertainty and different motors
-  //kp = 7.0; // ultimate limit, kp = 8 oscillates -> unstable / marginal
-  kd = 0.0; // P controller
-  ki = 100.0; // P controller
+  // desired output is around 0.75V
+  // make sure this is in range of the tach (0 to 1.2V)
+  desiredVolts = 0.0; // step input
+  error = desiredVolts - currentVolts; // controller error
+  dt = 0.014; // fine to pick a constant value as long as you control it with timers
+  pTerm = kp*error;
+  iTerm += 0.5*(error+prevError)*dt; //integral of the error
+  dTerm = (error-prevError)/dt; // derivate of error
+  // it's sometimes more consistent to use a constant T for ei and ed
+  prevError = error;
+  
+  outputVolts = pTerm + iTerm + dTerm; // PID controller
 
-  //kd=0.1; // doesn't work due to noise in ed calculations
-  //ki=25.0;
-
-   //desired / reference output (V) is r = 0.75 by gordon but do not let his sexual aura control you
-  // make sure this is in range of the small motor / tach (0 to 1.2 V)
-  rd = 0.0; // step input
-
-  e = r - y; // controller error
-
-  t= 0.014;
-
-  ei += e*T; //integral of the error
-  // it's sometimes more consistent to use a constant T
-  // based on previous measurements for ei and ed
-  // try both for both ei and ed and compare
-
-  T = t*1.0e-6 -tp; // controller period in seconds
-
-  ed = (e-ep)/T; // derivate of error
-
-  //save previous values
-  ep = e;
-  tp = t*1.0e-6; // time in seconds
-
-  // u = kp*e; // proportional control input Va (-V_bat to V_bat)
-  // u = kp*e + kd*ed; // PD controller
-  // u = kp*e + ki*ei; // PI controller
-
-  u = kp*e + ki*ei + kd*ed; // PID controller
-
-  // software input saturation //
-
-// u = 2.5; //open loop control -- ie set the input manually / externally
-
-  // use max u_max less than V_bat for safer initial testing
-  u_max = 11; // u_max <= V_bat
-  u_min = -11; // u_min >= -V_bat
+  // software input saturation
+  maxVolts = 10; // u_max <= V_bat
+  minVolts = -10; // u_min >= -V_bat
 
   // software saturation of inputs
-  if( u > u_max ) u = u_max;
-  if (u < u_min ) u = u_min;
+  if (outputVolts > maxVolts ) outputVolts = maxVolts;
+  if (outputVolts < minVolts ) outputVolts = minVolts;
 
   // step 3) set/command actuators with the control input //////
 
-  // for ESC use neutral of 1500 us and +/- 300 us range ->
-  // max = 1500 + 300 = 1800
-  // min = 1500 - 300 = 1200    
-  
   // convert u to actuator units/scaling the microcontroller / ESC uses
-  // (in microseconds) with the formula below
   // note u / V_bat ranges from -1 to 1 or less (depending on umin,umax)
 //  u_ESC = 1500 + (u/V_bat)*300;
-  
  // u_ESC = 1500 + u*V_bat_inv*300; // faster than division
-
   u_ESC = 1500 + u*V_bat_inv*100; // use 50 for lower ESC speed
-  //can increase after initial testing
-
-  //writeMicroseconds(us) is more precise than write(deg)
   servo1.writeMicroseconds(u_ESC);
-  motorspeed = u_ESC;
-
-  // 4) (optional) print out / record testing data //////
-
-  Serial.print("t= ");
-  Serial.print(t);
-  Serial.print(" ");  
-
-  Serial.print("e= ");
-  Serial.print(e);
-  Serial.print(" ");
-
-  Serial.print("u= ");
-  Serial.print(u);
-  Serial.print(" ");
-
-  // Serial.print(ki*ei);
-  // Serial.print(" ");
-
-  Serial.print("T= ");
-  Serial.print(T, 5);
-
-  Serial.print("\n");
-
-  Serial.print(motorspeed, " ESC setting.\n");
-
-  Serial.print("y (voltage from tach)= ");
-  Serial.print(y);
-  Tacho_vin=y;
-  rpm= (4935.9*(Tacho_vin))+17.598;
-  Serial.print("\nrpm of the car = ");
-  Serial.print(rpm);
-  Serial.print("\n");
-
-  
-  
-  delay(1);
+  driveSpeed = u_ESC;
 }
 
-void setup_ADC()
-{
+/*
+void setup_ADC() {}
   cli();  // disable interrupts
  
   // select current ADC channel A0
@@ -289,8 +271,4 @@ void setup_ADC()
   
   sei(); // enable interrupts
 }
-
-void loop() {
-  // put your main code here, to run repeatedly:
-
-}
+*/
