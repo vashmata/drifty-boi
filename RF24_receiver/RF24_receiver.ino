@@ -4,7 +4,7 @@
 #include "printf.h"
 
 // Instantiate with (CE,CSN)
-RF24 radio(7,6);
+RF24 radio(7,8);
 
 const byte address[6] = "00001";
 
