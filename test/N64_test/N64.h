@@ -5,11 +5,17 @@
  * Rewritten by Omar Jbara to detect input from one n64 controller 
  */
 
+/**
+ * To use, hook up the following to the Arduino Duemilanove:
+ * Digital I/O 2: N64 serial line
+ * All appropriate grounding and power lines
+ */
+ 
 #define N64_PIN 2
 #define N64_PIN_DIR DDRD
 // these two macros set arduino pin 2 to input or output, which with an
 // external 1K pull-up resistor to the 3.3V rail, is like pulling it high or
-// low. These operations translate to 1 op code, which takes 2 cycles
+// low.  These operations translate to 1 op code, which takes 2 cycles
 
 //#define N64_HIGH DDRD &= ~0x04
 //#define N64_LOW DDRD |= 0x04
@@ -19,15 +25,8 @@
 #define N64_LOW DDRD |= B00000100
 #define N64_QUERY (PIND & B00000100)
 
-/**
- * To use, hook up the following to the Arduino Duemilanove:
- * Digital I/O 2: N64 serial line
- * All appropriate grounding and power lines
- */
-
-
 // 8 bytes of data that we get from the controller
-struct {
+struct N64Data {
     // bits: 0, 0, 0, start, y, x, b, a
     unsigned char data1;
     // bits: 1, L, R, Z, Dup, Ddown, Dright, Dleft
@@ -36,12 +35,6 @@ struct {
     char stick_y;
 } N64_status;
 char N64_raw_dump[33]; // 1 received bit per byte
-
-
-void N64_send(unsigned char *buffer, char length);
-void N64_get();
-void print_N64_status();
-void translate_raw_data();
 
 
 void translate_raw_data()

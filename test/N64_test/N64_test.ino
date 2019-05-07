@@ -1,8 +1,15 @@
 #include <avr/io.h> 
-#include "pins_arduino.h"
-#include "crc_table.h"
 #include "N64.h"
+#include "pins_arduino.h"
 #define BIT(a) (1 << (a))
+
+void N64_send(unsigned char *buffer, char length);
+void N64_get();
+void print_N64_status();
+void translate_raw_data();
+
+
+#include "crc_table.h"
 
 
 void setup()
@@ -16,15 +23,16 @@ void setup()
   // HBRR0H = 0000
   // UBRR0L = 01100111
   UBRR0L = 103; 
-  
-  
+
+
+
   // Communication with N64 controller on this pin
   // Don't remove these lines, we don't want to push +5V to the controller
   // digitalWrite(N64_PIN, LOW);  
   // pinMode(N64_PIN, INPUT);
   
-  DDRD = 0; // digital write pin2 to low
-  PORTB = 0; // pinmode pin 2 to input
+  DDRD = B00000000; // digital write pin2 to low
+  PORTD = B00000000; // pinmode pin 2 to input
 
   // Initialize the N64controller by sending it a null byte.
   // This is unnecessary for a standard controller, but is required for the
@@ -85,6 +93,10 @@ void loop()
     Serial.print(' ');
     Serial.print(N64_status.stick_y, DEC);
     Serial.print(" \n");
+   //   Serial.print("         Stick X:");
+ //   Serial.print(N64_status.stick_x, DEC);
+  //  Serial.print("         Stick Y:");
+//Serial.println(N64_status.stick_y, DEC);
 
 
     // DEBUG: print it
