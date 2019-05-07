@@ -71,20 +71,20 @@ void traction_control(){
   float kp, kd, ki; // controller gains
   float e, ed, ei; //error for controllers
   float u; // modifies speed and sends a value to speed control
-  
-  if (backVel >= frontVel) y = (backVel-frontVel)/backVel; // traction
-  else y = (backVel-frontVel)/frontVel; // braking
-  // handle for when they
-  
-  rmin = 0.1;
-  rmax = 0.5;
-  
-  if ((abs(y) < rmin) | (abs(y) > rmax)) tractionChange = 1;
-  else tractionChange = 0;
 
   kp = 5.0; // Find limit value for stability
 
+  rmin = 0.1;
+  rmax = 0.5;
+
   r = (rmin + rmax)/2;
+  
+  if (backVel >= frontVel) y = (backVel-frontVel)/backVel; // traction
+  else y = (backVel-frontVel)/frontVel; r = -r; // braking
+  
+  if ((abs(y) < rmin) | (abs(y) > rmax)) tractionChange = 1;
+  else tractionChange = 0;
+  
   e = r - y;
   u = kp*e*tractionChange;
 }
