@@ -19,3 +19,6 @@ The car will be controlled by Arduino Nanos and a Teensy 3.5. It has a very fast
 - Convert the voltage to rpm using a relationship determined experimentally
 - Ignore the dead band when the motor starts up
 - TODO: fix the code so that it waits between measuring A6 and A7 rather than just measuring both motors then waiting
+
+## Speed Control
+- Implement a PID loop to control the ESC based on desired and measured motor speed
