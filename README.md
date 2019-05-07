@@ -24,4 +24,9 @@ The Teensy 3.5 will relay commands from the remote controller to all of the othe
 - Shift the voltage down to 0 for the real tachometer voltage
 - Convert the voltage to rpm using a relationship determined experimentally
 - Ignore the dead band when the motor starts up
-- TODO: fix the code so that it waits between measuring A6 and A7 rather than just measuring both motors then waiting
+- TODO: fix the code for front wheels so that it waits between measuring A6 and A7 rather than just measuring both motors then waiting
+- TODO: take average of both front wheel speeds for front speed in traction control
+
+## Speed Control
+- Implement a PID loop to control the ESC based on desired and measured motor speed
+- TODO: tune PID
