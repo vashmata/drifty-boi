@@ -14,8 +14,16 @@
 #include <Servo.h>
 #include <Arduino.h>
 #include <math.h>
-#include<avr/io.h>
-#include<avr/interrupt.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
+
+/* communications */
+#include <SPI.h>
+#include <Wire.h>
+#include "RF24.h"
+#include "nRF24L01.h"
+#include "printf.h"
+
 #define BIT(a) (1 << (a))
 
 /* tachometer calculations */
@@ -40,17 +48,24 @@ const float A_TO_V = VOLTAGE_5v_CONST / 1024.0;
 #define PRINT_PERIOD 100
 #define BAUD_RATE 9600
 #define SERIAL_TIMEOUT 20
+#define CE 7
+#define CSN 8
+bool start = false;
+int cmd[4] = {0, 0, 0, 0}; // [start, turbo, linear velocity, servo angle]
+const byte address[6] = "NODROG";
+RF24 radio(CE, CSN);
 
 /* motor information */
 #define DRIVE_STOP 1500
-#define DRIVE_OFFSET 100
+#define DRIVE_OFFSET 40
 #define PID_PERIOD 20 // 20ms
-float speedMultiplier = 1;
+float speedMultiplier = 1.5;
 
 /* battery information */
 // battery voltage (V) -- assume constant for now
 const float V_bat = 11.5;
 const float V_bat_inv = 1 / V_bat;
+const float tachMax = 0.05;
 
 /* timing */
 unsigned long prevPrint = millis(); // for serial printing periodic data
@@ -67,7 +82,7 @@ int n = 0; // counter for averaging filter, counts up to AVERAGING_COUNTS
 Servo drive;
 const float dt = 0.020; // fine to pick a constant value as long as you control it with timers
 const float dtInv = 1 / dt;
-float kp = 0.2; // proportional controller gain, 40% FOS to protect against
+float kp = 0.002; // proportional controller gain, 40% FOS to protect against
 float ki = 0; // I controller
 float kd = 0; // D controller
 
@@ -78,7 +93,12 @@ void setup() {
   /* comms setup */
   Serial.begin(BAUD_RATE); Serial.setTimeout(SERIAL_TIMEOUT);
   Serial.println(F("Drive Nano has booted up."));
-
+  radio.begin();
+  radio.openReadingPipe(0, address);
+  radio.setPALevel(RF24_PA_MIN);
+  radio.startListening();
+  Wire.begin();
+  
   Serial.println("Turn on ESC now");
   drive.attach(DRIVE_PWM);
   drive.writeMicroseconds(DRIVE_STOP);
@@ -105,12 +125,21 @@ void setup() {
 
   prevPID = millis();
   prevPrint = millis();
+
+  Serial.println("Waiting for start command...");
+  while (!start) {
+    if (radio.available()) {
+      radio.read(&cmd, sizeof(cmd));
+      start = cmd[0];
+    }
+  }
+  Serial.println("STARTED!!!!");
 }
 
 void loop() {
   /* tach value averaging */
   static unsigned long driveTachSum = 0;
-  static float prevAnalogRead = micros();
+  static float prevAnalogRead = micros(); 
   static int n = 0;
   if (n < AVERAGING_COUNTS) {
     if (micros() - prevAnalogRead > 200) {
@@ -128,11 +157,28 @@ void loop() {
   else {
     // tach voltage is related to car speed / wheel speed / drive belt speed
     driveTachVolts = (float)driveTachSum * A_TO_V * AVERAGING_COUNTS_INV - driveTachResting;
+    driveTachVolts -= 0.03;
+    driveTachVolts*=0.5;
     driveTachSum = 0; n = 0;
   }
 
-  /* input comms */
-  // receive speed commands here?
+  /* commands to car */
+  // receive speed commands
+  if (radio.available()) {
+    radio.read(&cmd, sizeof(cmd));
+    start = cmd[0];
+    // Send angle to front nano
+    Wire.beginTransmission(8);
+    int angle = cmd[3];
+    Wire.write(angle);
+    Wire.endTransmission();
+    
+    // redundant stop
+    if (!start) {
+      drive.writeMicroseconds(DRIVE_STOP);
+      Serial.println("STOPPED");
+    }
+  }
   static float desiredVolts = 0;
   // if boost mode, speedMultiplier = 3, else set it to 1
   //desiredVolts = blabla; // take desired volts from higher level stuff
@@ -140,13 +186,23 @@ void loop() {
   /* PID control */
   static int driveSpeed = DRIVE_STOP;
   static float outputVolts = 0;
-  if (millis() - prevPID > PID_PERIOD) {
-    driveSpeed = updatePID(driveTachVolts, desiredVolts);
-    drive.writeMicroseconds(driveSpeed);
-    prevPID = millis();
+  if (start) {
+    desiredVolts = ((float)cmd[2]) * 0.0001; // max 1250 -> 0.1250 volts
+    if (millis() - prevPID > PID_PERIOD) {
+      //driveSpeed = updatePID(driveTachVolts, desiredVolts);
+      int offset = (desiredVolts / tachMax) * DRIVE_OFFSET * speedMultiplier;
+      if (offset!=0 && abs(offset)<45) offset = (offset/abs(offset))*45; // compensate for deadband
+      driveSpeed = DRIVE_STOP + offset;
+      drive.writeMicroseconds(driveSpeed);
+      prevPID = millis();
+    }
+  }
+  else {
+    desiredVolts = 0;
+    drive.writeMicroseconds(DRIVE_STOP);
   }
 
-  /* return comms */
+  /* feedback to user */
   if (millis() - prevPrint > PRINT_PERIOD) {
     // ignore deadband (but this is kinda inaccurate...)
     // maybe we should readjust this stuff becasue the above function may be off
@@ -157,8 +213,8 @@ void loop() {
     //Serial.print(driveTachVolts, 3); Serial.print(" V\t");
     //Serial.println(driveTachSpeed); Serial.print(" RPM\t");
 
-    Serial.print(F("Desired volts: ")); Serial.print(desiredVolts); Serial.print("\t");
-    Serial.print(F("Current volts: ")); Serial.print(driveTachVolts); Serial.print("\t");
+    Serial.print(F("Desired volts: ")); Serial.print(desiredVolts,4); Serial.print("\t");
+    Serial.print(F("Current volts: ")); Serial.print(driveTachVolts,4); Serial.print("\t");
     Serial.println("");
     Serial.print(F("PID output: ")); Serial.print(driveSpeed); Serial.print(F(" pulse time"));
     Serial.println("");
