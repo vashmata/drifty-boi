@@ -69,17 +69,22 @@ void traction_control(){
   float backVel, frontVel; // vel. of back wheel + front
   float y, rmax, rmin, r; // slip ratio, real and desired, + erorr
   float kp, kd, ki; // controller gains
-  float e, ed, ei; //error for controllers
+  float e, ed; //error for controllers
   float u; // modifies speed and sends a value to speed control
   unsigned long int t, dt; // time values for derivative
-  static unsigned long int tp = micros(), ep = 0; // static values from previoujs loop
+  static unsigned long int tp = micros(); // values conserved for multiple loops
+  static float ep = 0.0, ei = 0.0;
+  float T; // period: time it takes to do one loop
 
   
   kp = 5.0; // Find limit value for stability
-  kd = 0.0; // assign value after kp is set
-
+  kd = 0.0; // assign value after kp is set. Should be large
+  ki = 0.0; // assign after kd is set if there is steady-state drift error. Should be small
+  
   rmin = 0.1; // range of values for acceptable slip
   rmax = 0.5;
+
+  T = 0.01; // Assumed value for 1 period
 
   r = (rmin + rmax)/2; // average slip ratio to aim for
   
@@ -90,13 +95,16 @@ void traction_control(){
   else tractionChange = 0;
   
   e = r - y;
+
+  ei += e*T;
   
   t = micros();
   dt = t - tp;
 
   ed = (e-ep)/dt;
   
-  u = (kp*e + kd*ed)*tractionChange; // value sent to speed control to modify actual speed
+  u = (kp*e + kd*ed)*tractionChange + ki*ei;
+  //value sent to speed control to modify speed. ki should always be active
 
   tp = t;
   ep = e;
