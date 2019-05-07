@@ -44,14 +44,12 @@ const float A_TO_V = VOLTAGE_5v_CONST / 1024.0;
 /* motor information */
 #define DRIVE_STOP 1500
 #define DRIVE_OFFSET 100
-float speedMultiplier = 1; 
+float speedMultiplier = 1;
 
 /* battery information */
 // battery voltage (V) -- assume constant for now
 const float V_bat = 11.5;
 const float V_bat_inv = 1 / V_bat;
-// software input saturation
-const int maxVolts = 10; // u_max <= V_bat
 
 /* timing */
 unsigned long prevPrint = millis(); // for serial printing periodic data
@@ -68,10 +66,9 @@ int n = 0; // counter for averaging filter, counts up to AVERAGING_COUNTS
 Servo drive;
 const float dt = 0.014; // fine to pick a constant value as long as you control it with timers
 const float dtInv = 1 / dt;
-float kp = 5.0; // proportional controller gain, 40% FOS to protect against
-//kp = 7.0; // ultimate limit, kp = 8 oscillates -> unstable / marginal
-float ki = 0.0; // I controller
-float kd = 0.0; // D controller
+float kp = 1.0; // proportional controller gain, 40% FOS to protect against
+float ki = 0; // I controller
+float kd = 0; // D controller
 
 void updatePID();
 void setup_ADC();
@@ -79,17 +76,17 @@ void setup_ADC();
 void setup() {
   /* comms setup */
   Serial.begin(BAUD_RATE); Serial.setTimeout(SERIAL_TIMEOUT);
-  Serial.println(F("Front Nano has booted up."));
+  Serial.println(F("Drive Nano has booted up."));
 
   Serial.println("Turn on ESC now");
   drive.attach(DRIVE_PWM);
   drive.writeMicroseconds(DRIVE_STOP);
-  delay(10000); //wait 10s for ESC to turn on/calibrate
+  delay(5000); //wait 10s for ESC to turn on/calibrate
 
   /* pins setup */
-  //setup_ADC();
   pinMode(DRIVE_TACH, INPUT);
   analogReference(EXTERNAL);
+  //Serial.print(F("ADMUX: ")); Serial.println(ADMUX,BIN);
 
   /* tachometer calibration */
   Serial.println(F("Calibrating drive tachometer"));
@@ -114,16 +111,17 @@ void loop() {
   static float prevAnalogRead = micros();
   static int n = 0;
   if (n < AVERAGING_COUNTS) {
-    // this next part takes so little time that
-    // it's probably safe to use a blocking while loop.
-    // plus it can be interrupted by timers
-    //if (micros() - prevAnalogRead > 200){
-    n++;
-    ADCSRA |= BIT(ADSC); // ADC start conversion
-    while (ADCSRA & BIT(ADSC)) ; // BIT(ADSC) turns to 0 when complete
-    driveTachSum += ADC; //analogRead(DRIVE_TACH);
-    prevAnalogRead = micros();
-    //}
+    if (micros() - prevAnalogRead > 200) {
+      n++;
+      driveTachSum += analogRead(DRIVE_TACH);
+      // this next part takes so little time that
+      // it's probably safe to use a blocking while loop.
+      // plus it can be interrupted by timers
+      //ADCSRA |= BIT(ADSC); // ADC start conversion
+      //while (ADCSRA & BIT(ADSC)) ; // BIT(ADSC) turns to 0 when complete
+      //driveTachSum += ADC; //analogRead(DRIVE_TACH);
+      prevAnalogRead = micros();
+    }
   }
   else {
     // tach voltage is related to car speed / wheel speed / drive belt speed
@@ -133,15 +131,14 @@ void loop() {
 
   /* input comms */
   // receive speed commands here?
-  static float desiredVolts = driveTachResting;
+  static float desiredVolts = 0;
   // if boost mode, speedMultiplier = 3, else set it to 1
   //desiredVolts = blabla; // take desired volts from higher level stuff
-  
+
   /* PID control */
   static int driveSpeed = DRIVE_STOP;
   static float outputVolts = 0;
-  outputVolts = updatePID(driveTachVolts, desiredVolts);
-  driveSpeed = 1500 + (outputVolts*V_bat_inv)*DRIVE_OFFSET*speedMultiplier;
+  driveSpeed = updatePID(driveTachVolts, desiredVolts);
   drive.writeMicroseconds(driveSpeed);
 
   /* return comms */
@@ -151,22 +148,31 @@ void loop() {
     driveTachSpeed = driveTachVolts * 4935.9 + 17.598;
     if (fabs(driveTachSpeed) <= 30) driveTachSpeed = 0;
 
-    // beware that right now the front wheels are flipped cuz i was lazy
-    Serial.print(F("Drive shaft: "));
-    Serial.print(driveTachVolts, 3); Serial.print(" V\t");
-    Serial.println(driveTachSpeed); Serial.print(" RPM\t");
+    //Serial.print(F("Drive shaft: "));
+    //Serial.print(driveTachVolts, 3); Serial.print(" V\t");
+    //Serial.println(driveTachSpeed); Serial.print(" RPM\t");
+
+    Serial.print(F("Desired volts: ")); Serial.print(desiredVolts); Serial.print("\t");
+    Serial.print(F("Current volts: ")); Serial.print(driveTachVolts); Serial.print("\t");
+    Serial.println("");
+    Serial.print(F("PID output: ")); Serial.print(driveSpeed); Serial.print(F(" pulse time"));
+    Serial.println("");
 
     prevPrint = millis();
   }
 }
 
-float updatePID(float desiredVolts, float currentVolts) {
-  // desired output is around 0.75V ???
+int updatePID(float desiredVolts, float currentVolts) {
   static float error, prevError;
   static float pTerm, iTerm, dTerm;
-  static float outputVolts;
+  static float outputVolts; static int outputPulse;
+  static unsigned long t = millis(); static unsigned long tp = millis();
+  static int dt; // constant dt usable in timer interrupts
 
-  error = desiredVolts - currentVolts; // controller error
+  t = millis();
+  dt = t - tp;
+  error = desiredVolts - currentVolts; // controller error, uses tach voltages
+  if(fabs(error) < 0.01) error = 0;
   pTerm = kp * error; // proportional error
   iTerm += 0.5 * (error + prevError) * dt; // integral of the error
   dTerm = (error - prevError) * dtInv; // derivative of error
@@ -174,12 +180,15 @@ float updatePID(float desiredVolts, float currentVolts) {
   prevError = error;
 
   outputVolts = pTerm + iTerm + dTerm; // PID controller
+  outputPulse = DRIVE_STOP + (outputVolts * V_bat_inv) * DRIVE_OFFSET * speedMultiplier;
 
   // software saturation of inputs
-  if (outputVolts > maxVolts ) outputVolts = maxVolts;
-  if (outputVolts < -maxVolts ) outputVolts = -maxVolts;
+  int offset = DRIVE_OFFSET * speedMultiplier;
+  if (outputPulse > DRIVE_STOP + offset) outputPulse = DRIVE_STOP + offset;
+  if (outputPulse < DRIVE_STOP - offset) outputPulse = DRIVE_STOP - offset;
 
-  return outputVolts;
+  tp = t;
+  return outputPulse; // return ESC pulse time
 }
 
 void setup_ADC() {
@@ -187,7 +196,6 @@ void setup_ADC() {
 
   ADMUX = 0; // set ADC reference (max input voltage) to the Aref pin
   ADMUX |= BIT(MUX1) | BIT(MUX2); // select channel A6
-
   // set ADC control and status register A
   ADCSRA = 0;
   ADCSRA |= BIT(ADEN); // ADC enable
