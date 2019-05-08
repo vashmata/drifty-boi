@@ -51,21 +51,25 @@ const float A_TO_V = VOLTAGE_5v_CONST / 1024.0;
 #define CE 7
 #define CSN 8
 bool start = false;
-int cmd[4] = {0, 0, 0, 0}; // [start, turbo, linear velocity, servo angle]
-const byte address[6] = "NODROG";
+int cmd[7] = {0, 0, 0, 0, 0, 0, 0}; // [start, turbo, linear velocity, servo angle, smooth speed, speed control, traction control]
+const byte address[7] = "NODROG";
 RF24 radio(CE, CSN);
+
+bool isClosedLoop = false;
+bool isSlow = false;
+bool isTractionCtrl = false;
 
 /* motor information */
 #define DRIVE_STOP 1500
-#define DRIVE_OFFSET 40
+#define DRIVE_OFFSET 100
 #define PID_PERIOD 20 // 20ms
-float speedMultiplier = 1.5;
+float speedMultiplier = 1.0;
 
 /* battery information */
 // battery voltage (V) -- assume constant for now
 const float V_bat = 11.5;
 const float V_bat_inv = 1 / V_bat;
-const float tachMax = 0.05;
+const float tachMax = 0.09;
 
 /* timing */
 unsigned long prevPrint = millis(); // for serial printing periodic data
@@ -86,6 +90,7 @@ float kp = 0.002; // proportional controller gain, 40% FOS to protect against
 float ki = 0; // I controller
 float kd = 0; // D controller
 
+float tractionControl(float backVel, float frontVel);
 void updatePID();
 void setup_ADC();
 
@@ -98,7 +103,7 @@ void setup() {
   radio.setPALevel(RF24_PA_MIN);
   radio.startListening();
   Wire.begin();
-  
+
   Serial.println("Turn on ESC now");
   drive.attach(DRIVE_PWM);
   drive.writeMicroseconds(DRIVE_STOP);
@@ -139,7 +144,7 @@ void setup() {
 void loop() {
   /* tach value averaging */
   static unsigned long driveTachSum = 0;
-  static float prevAnalogRead = micros(); 
+  static float prevAnalogRead = micros();
   static int n = 0;
   if (n < AVERAGING_COUNTS) {
     if (micros() - prevAnalogRead > 200) {
@@ -158,21 +163,31 @@ void loop() {
     // tach voltage is related to car speed / wheel speed / drive belt speed
     driveTachVolts = (float)driveTachSum * A_TO_V * AVERAGING_COUNTS_INV - driveTachResting;
     driveTachVolts -= 0.03;
-    driveTachVolts*=0.5;
+    driveTachVolts *= 0.5;
     driveTachSum = 0; n = 0;
   }
 
   /* commands to car */
   // receive speed commands
+  static float frontTachVolts
   if (radio.available()) {
     radio.read(&cmd, sizeof(cmd));
     start = cmd[0];
+    if (cmd[4]) isSlow = true; else isSlow = false;
+    if (cmd[5]) isClosedLoop = true; else isClosedLoop = false;
+    if (cmd[6]) isTractionCtrl = true; else isTractionCtrl = false;
+    // fix below code
+    Wire.beginTransmission(8);
+    int angle = cmd[3];
+    Wire.read(frontTachVolts);
+    Wire.endTransmission();
+    
     // Send angle to front nano
     Wire.beginTransmission(8);
     int angle = cmd[3];
     Wire.write(angle);
     Wire.endTransmission();
-    
+
     // redundant stop
     if (!start) {
       drive.writeMicroseconds(DRIVE_STOP);
@@ -180,18 +195,38 @@ void loop() {
     }
   }
   static float desiredVolts = 0;
-  // if boost mode, speedMultiplier = 3, else set it to 1
-  //desiredVolts = blabla; // take desired volts from higher level stuff
 
-  /* PID control */
+  /* reducing speed for precise movements */
+  if (isSlow) speedMultiplier = 0.25;
+  else speedMultiplier = 1.0;
+
+  /* speed control */
   static int driveSpeed = DRIVE_STOP;
   static float outputVolts = 0;
   if (start) {
-    desiredVolts = ((float)cmd[2]) * 0.0001; // max 1250 -> 0.1250 volts
+    desiredVolts = ((float)cmd[2]) * 0.0001; // max 900 -> 0.9 volts
     if (millis() - prevPID > PID_PERIOD) {
-      //driveSpeed = updatePID(driveTachVolts, desiredVolts);
-      int offset = (desiredVolts / tachMax) * DRIVE_OFFSET * speedMultiplier;
-      if (offset!=0 && abs(offset)<45) offset = (offset/abs(offset))*45; // compensate for deadband
+      if (isTractionCtrl) {
+        desiredVolts = tractionControl(driveTachVolts, frontTachVolts);
+      }
+      static int offset;
+      if (isClosedLoop) {
+        offset = updatePID(driveTachVolts, desiredVolts);
+      }
+      else {
+        offset = (desiredVolts / tachMax) * speedMultiplier;
+      }
+      // deal with edge cases
+      if (offset != 0 && abs(offset) < 45) {
+        offset = (offset / abs(offset)) * 45; // compensate for deadband
+      }
+      if (offset < 0) {
+        offset -= 30; // compensate for slower while reversing
+      }
+      if (abs(offset) > DRIVE_OFFSET) {
+        offset = (offset / abs(offset)) * DRIVE_OFFSET; // saturation
+      }
+      // actually control rear wheels
       driveSpeed = DRIVE_STOP + offset;
       drive.writeMicroseconds(driveSpeed);
       prevPID = millis();
@@ -213,14 +248,54 @@ void loop() {
     //Serial.print(driveTachVolts, 3); Serial.print(" V\t");
     //Serial.println(driveTachSpeed); Serial.print(" RPM\t");
 
-    Serial.print(F("Desired volts: ")); Serial.print(desiredVolts,4); Serial.print("\t");
-    Serial.print(F("Current volts: ")); Serial.print(driveTachVolts,4); Serial.print("\t");
+    Serial.print(F("Desired volts: ")); Serial.print(desiredVolts, 4); Serial.print("\t");
+    Serial.print(F("Current volts: ")); Serial.print(driveTachVolts, 4); Serial.print("\t");
     Serial.println("");
     Serial.print(F("PID output: ")); Serial.print(driveSpeed); Serial.print(F(" pulse time"));
     Serial.println("");
 
     prevPrint = millis();
   }
+}
+
+float tractionControl(float backVel, float frontVel) {
+  static float tractionChange; // for tacho feedback averaging
+  static float y, rmax, rmin, r; // slip ratio, real and desired, + erorr
+  static float kp, kd, ki; // controller gains
+  static float e, ed; //error for controllers
+  static float u; // modifies speed and sends a value to speed control
+  static unsigned long int t, dt; // time values for derivative
+  static unsigned long int tp = micros(); // values conserved for multiple loops
+  static float ep = 0.0, ei = 0.0;
+  static float T; // period: time it takes to do one loop
+
+  kp = 5.0; // Find limit value for stability
+  kd = 0.0; // assign value after kp is set. Should be large
+  ki = 0.0; // assign after kd is set if there is steady-state drift error. Should be small
+
+  rmin = 0.1; rmax = 0.5; // range of values for acceptable slip
+
+  r = (rmin + rmax) / 2; // average slip ratio to aim for
+
+  if (backVel >= frontVel) y = (backVel - frontVel) / backVel; // traction
+  else y = (backVel - frontVel) / frontVel; r = -r; // braking
+
+  if ((abs(y) < rmin) | (abs(y) > rmax)) tractionChange = 1; // traction control only active if beyond range
+  else tractionChange = 0;
+
+  t = micros(); dt = t - tp;
+
+  e = r - y;
+  if (fabs(e) < 0.01) {
+    e = 0;
+  }
+  ei += e * T;
+  ed = (e - ep) / dt;
+  u = (kp * e + kd * ed) * tractionChange + ki * ei;
+  //value sent to speed control to modify speed. ki should always be active
+  tp = t;
+  ep = e;
+  return u;
 }
 
 int updatePID(float desiredVolts, float currentVolts) {
@@ -241,15 +316,10 @@ int updatePID(float desiredVolts, float currentVolts) {
   prevError = error;
 
   outputVolts = pTerm + iTerm + dTerm; // PID controller
-  outputPulse = DRIVE_STOP + (outputVolts * V_bat_inv) * DRIVE_OFFSET * speedMultiplier;
-
-  // software saturation of inputs
-  int offset = DRIVE_OFFSET * speedMultiplier;
-  if (outputPulse > DRIVE_STOP + offset) outputPulse = DRIVE_STOP + offset;
-  if (outputPulse < DRIVE_STOP - offset) outputPulse = DRIVE_STOP - offset;
+  int offset = (outputVolts * V_bat_inv) * speedMultiplier;
 
   tp = t;
-  return outputPulse; // return ESC pulse time
+  return offset; // return ESC pulse time
 }
 
 void setup_ADC() {
