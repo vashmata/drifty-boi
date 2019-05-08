@@ -51,8 +51,8 @@ const float A_TO_V = VOLTAGE_5v_CONST / 1024.0;
 #define CE 7
 #define CSN 8
 bool start = false;
-int cmd[4] = {0, 0, 0, 0}; // [start, turbo, linear velocity, servo angle]
-const byte address[6] = "NODROG";
+int cmd[6] = {0, 0, 0, 0, 0, 0}; // [start, turbo, linear velocity, servo angle, smooth speed, speed pid toggle]
+const byte address[7] = "NODROG";
 RF24 radio(CE, CSN);
 
 bool isClosedLoop = false;
@@ -170,6 +170,8 @@ void loop() {
   if (radio.available()) {
     radio.read(&cmd, sizeof(cmd));
     start = cmd[0];
+    if (cmd[4]) isSlow = true; else isSlow = false;
+    if (cmd[5]) isClosedLoop = true; else isClosedLoop = false;
     // Send angle to front nano
     Wire.beginTransmission(8);
     int angle = cmd[3];
@@ -196,7 +198,7 @@ void loop() {
     if (millis() - prevPID > PID_PERIOD) {
       static int offset;
 	  if(isClosedLoop) offset = updatePID(driveTachVolts, desiredVolts);
-      else offset = (desiredVolts / tachMax) * speedMuliplier;
+      else offset = (desiredVolts / tachMax) * speedMultiplier;
       if (offset!=0 && abs(offset)<45) offset = (offset/abs(offset))*45; // compensate for deadband
 	  if (offset<0) offset -= 30; // compensate for slower while reversing
 	  if (abs(offset) > DRIVE_OFFSET) offset = (offset/abs(offset))*DRIVE_OFFSET; // saturation
@@ -249,7 +251,7 @@ int updatePID(float desiredVolts, float currentVolts) {
   prevError = error;
 
   outputVolts = pTerm + iTerm + dTerm; // PID controller
-  offset = (outputVolts * V_bat_inv)*speedMultiplier;
+  int offset = (outputVolts * V_bat_inv)*speedMultiplier;
 
   tp = t;
   return offset; // return ESC pulse time
