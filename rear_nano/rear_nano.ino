@@ -169,14 +169,18 @@ void loop() {
 
   /* commands to car */
   // receive speed commands
-  static int leftTach, rightTach;
+  static float frontTachVolts
   if (radio.available()) {
     radio.read(&cmd, sizeof(cmd));
     start = cmd[0];
     if (cmd[4]) isSlow = true; else isSlow = false;
     if (cmd[5]) isClosedLoop = true; else isClosedLoop = false;
     if (cmd[6]) isTractionCtrl = true; else isTractionCtrl = false;
-    // add code here or somewhere to read left and right tach values
+    // fix below code
+    Wire.beginTransmission(8);
+    int angle = cmd[3];
+    Wire.read(frontTachVolts);
+    Wire.endTransmission();
     
     // Send angle to front nano
     Wire.beginTransmission(8);
@@ -203,7 +207,6 @@ void loop() {
     desiredVolts = ((float)cmd[2]) * 0.0001; // max 900 -> 0.9 volts
     if (millis() - prevPID > PID_PERIOD) {
       if (isTractionCtrl) {
-        float frontTachVolts = 0.5 * (leftTach + rightTach);
         desiredVolts = tractionControl(driveTachVolts, frontTachVolts);
       }
       static int offset;
