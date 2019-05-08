@@ -51,12 +51,13 @@ const float A_TO_V = VOLTAGE_5v_CONST / 1024.0;
 #define CE 7
 #define CSN 8
 bool start = false;
-int cmd[6] = {0, 0, 0, 0, 0, 0}; // [start, turbo, linear velocity, servo angle, smooth speed, speed pid toggle]
+int cmd[7] = {0, 0, 0, 0, 0, 0, 0}; // [start, turbo, linear velocity, servo angle, smooth speed, speed control, traction control]
 const byte address[7] = "NODROG";
 RF24 radio(CE, CSN);
 
 bool isClosedLoop = false;
 bool isSlow = false;
+bool isTractionCtrl = false;
 
 /* motor information */
 #define DRIVE_STOP 1500
@@ -101,7 +102,7 @@ void setup() {
   radio.setPALevel(RF24_PA_MIN);
   radio.startListening();
   Wire.begin();
-  
+
   Serial.println("Turn on ESC now");
   drive.attach(DRIVE_PWM);
   drive.writeMicroseconds(DRIVE_STOP);
@@ -142,7 +143,7 @@ void setup() {
 void loop() {
   /* tach value averaging */
   static unsigned long driveTachSum = 0;
-  static float prevAnalogRead = micros(); 
+  static float prevAnalogRead = micros();
   static int n = 0;
   if (n < AVERAGING_COUNTS) {
     if (micros() - prevAnalogRead > 200) {
@@ -161,7 +162,7 @@ void loop() {
     // tach voltage is related to car speed / wheel speed / drive belt speed
     driveTachVolts = (float)driveTachSum * A_TO_V * AVERAGING_COUNTS_INV - driveTachResting;
     driveTachVolts -= 0.03;
-    driveTachVolts*=0.5;
+    driveTachVolts *= 0.5;
     driveTachSum = 0; n = 0;
   }
 
@@ -172,12 +173,13 @@ void loop() {
     start = cmd[0];
     if (cmd[4]) isSlow = true; else isSlow = false;
     if (cmd[5]) isClosedLoop = true; else isClosedLoop = false;
+    if (cmd[6]) isTractionCtrl = true; else isTractionCtrl = false;
     // Send angle to front nano
     Wire.beginTransmission(8);
     int angle = cmd[3];
     Wire.write(angle);
     Wire.endTransmission();
-    
+
     // redundant stop
     if (!start) {
       drive.writeMicroseconds(DRIVE_STOP);
@@ -185,23 +187,38 @@ void loop() {
     }
   }
   static float desiredVolts = 0;
-  
+
   /* reducing speed for precise movements */
-  if(isSlow) speedMultiplier = 0.25;
+  if (isSlow) speedMultiplier = 0.25;
   else speedMultiplier = 1.0;
-  
+
   /* speed control */
   static int driveSpeed = DRIVE_STOP;
   static float outputVolts = 0;
   if (start) {
     desiredVolts = ((float)cmd[2]) * 0.0001; // max 900 -> 0.9 volts
     if (millis() - prevPID > PID_PERIOD) {
+      if (isTractionCtrl) {
+        ; // desiredVolts = tractioncontrol(blablabla);
+      }
       static int offset;
-	  if(isClosedLoop) offset = updatePID(driveTachVolts, desiredVolts);
-      else offset = (desiredVolts / tachMax) * speedMultiplier;
-      if (offset!=0 && abs(offset)<45) offset = (offset/abs(offset))*45; // compensate for deadband
-	  if (offset<0) offset -= 30; // compensate for slower while reversing
-	  if (abs(offset) > DRIVE_OFFSET) offset = (offset/abs(offset))*DRIVE_OFFSET; // saturation
+      if (isClosedLoop) {
+        offset = updatePID(driveTachVolts, desiredVolts);
+      }
+      else {
+        offset = (desiredVolts / tachMax) * speedMultiplier;
+      }
+      // deal with edge cases
+      if (offset != 0 && abs(offset) < 45) {
+        offset = (offset / abs(offset)) * 45; // compensate for deadband
+      }
+      if (offset < 0) {
+        offset -= 30; // compensate for slower while reversing
+      }
+      if (abs(offset) > DRIVE_OFFSET) {
+        offset = (offset / abs(offset)) * DRIVE_OFFSET; // saturation
+      }
+      // actually control rear wheels
       driveSpeed = DRIVE_STOP + offset;
       drive.writeMicroseconds(driveSpeed);
       prevPID = millis();
@@ -223,8 +240,8 @@ void loop() {
     //Serial.print(driveTachVolts, 3); Serial.print(" V\t");
     //Serial.println(driveTachSpeed); Serial.print(" RPM\t");
 
-    Serial.print(F("Desired volts: ")); Serial.print(desiredVolts,4); Serial.print("\t");
-    Serial.print(F("Current volts: ")); Serial.print(driveTachVolts,4); Serial.print("\t");
+    Serial.print(F("Desired volts: ")); Serial.print(desiredVolts, 4); Serial.print("\t");
+    Serial.print(F("Current volts: ")); Serial.print(driveTachVolts, 4); Serial.print("\t");
     Serial.println("");
     Serial.print(F("PID output: ")); Serial.print(driveSpeed); Serial.print(F(" pulse time"));
     Serial.println("");
@@ -251,7 +268,7 @@ int updatePID(float desiredVolts, float currentVolts) {
   prevError = error;
 
   outputVolts = pTerm + iTerm + dTerm; // PID controller
-  int offset = (outputVolts * V_bat_inv)*speedMultiplier;
+  int offset = (outputVolts * V_bat_inv) * speedMultiplier;
 
   tp = t;
   return offset; // return ESC pulse time
