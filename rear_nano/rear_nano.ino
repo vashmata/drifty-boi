@@ -178,14 +178,16 @@ void loop() {
     if (cmd[6]) isTractionCtrl = true; else isTractionCtrl = false;
     // fix below code
     Wire.beginTransmission(8);
-    int angle = cmd[3];
-    Wire.read(frontTachVolts);
+    //frontTachVolts=Wire.read();
+    
     Wire.endTransmission();
     
     // Send angle to front nano
     Wire.beginTransmission(8);
     int angle = cmd[3];
-    Wire.write(angle);
+    if (angle < 0) Wire.write(1);
+    else Wire.write(0);
+    Wire.write(abs(angle));
     Wire.endTransmission();
 
     // redundant stop
