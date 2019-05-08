@@ -23,7 +23,7 @@
 RF24 radio(7,8);
 // Avoid common address names, otherwise it will interfere with
 // neighboring RF24 communication
-const byte address[6] = "NoDrOg";
+const byte address[6] = "NODROG";
 bool start_transmission = false;
 
 void N64_send(unsigned char *buffer, char length);
@@ -94,7 +94,7 @@ void setup()
   Serial.println("Started transmission");
   radio.begin();
   radio.openWritingPipe(address);
-  radio.setPALevel(RF24_PA_MAX);
+  radio.setPALevel(RF24_PA_MIN);
   radio.stopListening();
   N64_status.data1 = 0;
 }
@@ -105,10 +105,13 @@ void loop()
     // Command velocity is sent as integer to avoid problems with floats
     // i.e. mm/s
     // The receiver may convert this to a more practical value  
-    int cmd[4];
+    int cmd[7];
     parse_command(N64_status, cmd);
-//    for(int x : cmd) Serial.print(x);
-//    Serial.print('\n');
+    for (int x : cmd) { 
+      Serial.print(x);
+      Serial.print(" ");
+    }
+    Serial.print('\n');
     // Send command to car
     radio.write(&cmd, sizeof(cmd));
     delay(25);
