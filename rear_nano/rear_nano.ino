@@ -90,6 +90,7 @@ float kp = 0.002; // proportional controller gain, 40% FOS to protect against
 float ki = 0; // I controller
 float kd = 0; // D controller
 
+float tractionControl(float backVel, float frontVel);
 void updatePID();
 void setup_ADC();
 
@@ -168,12 +169,15 @@ void loop() {
 
   /* commands to car */
   // receive speed commands
+  static int leftTach, rightTach;
   if (radio.available()) {
     radio.read(&cmd, sizeof(cmd));
     start = cmd[0];
     if (cmd[4]) isSlow = true; else isSlow = false;
     if (cmd[5]) isClosedLoop = true; else isClosedLoop = false;
     if (cmd[6]) isTractionCtrl = true; else isTractionCtrl = false;
+    // add code here or somewhere to read left and right tach values
+    
     // Send angle to front nano
     Wire.beginTransmission(8);
     int angle = cmd[3];
@@ -199,7 +203,8 @@ void loop() {
     desiredVolts = ((float)cmd[2]) * 0.0001; // max 900 -> 0.9 volts
     if (millis() - prevPID > PID_PERIOD) {
       if (isTractionCtrl) {
-        ; // desiredVolts = tractioncontrol(blablabla);
+        float frontTachVolts = 0.5 * (leftTach + rightTach);
+        desiredVolts = tractionControl(driveTachVolts, frontTachVolts);
       }
       static int offset;
       if (isClosedLoop) {
@@ -248,6 +253,46 @@ void loop() {
 
     prevPrint = millis();
   }
+}
+
+float tractionControl(float backVel, float frontVel) {
+  static float tractionChange; // for tacho feedback averaging
+  static float y, rmax, rmin, r; // slip ratio, real and desired, + erorr
+  static float kp, kd, ki; // controller gains
+  static float e, ed; //error for controllers
+  static float u; // modifies speed and sends a value to speed control
+  static unsigned long int t, dt; // time values for derivative
+  static unsigned long int tp = micros(); // values conserved for multiple loops
+  static float ep = 0.0, ei = 0.0;
+  static float T; // period: time it takes to do one loop
+
+  kp = 5.0; // Find limit value for stability
+  kd = 0.0; // assign value after kp is set. Should be large
+  ki = 0.0; // assign after kd is set if there is steady-state drift error. Should be small
+
+  rmin = 0.1; rmax = 0.5; // range of values for acceptable slip
+
+  r = (rmin + rmax) / 2; // average slip ratio to aim for
+
+  if (backVel >= frontVel) y = (backVel - frontVel) / backVel; // traction
+  else y = (backVel - frontVel) / frontVel; r = -r; // braking
+
+  if ((abs(y) < rmin) | (abs(y) > rmax)) tractionChange = 1; // traction control only active if beyond range
+  else tractionChange = 0;
+
+  t = micros(); dt = t - tp;
+
+  e = r - y;
+  if (fabs(e) < 0.01) {
+    e = 0;
+  }
+  ei += e * T;
+  ed = (e - ep) / dt;
+  u = (kp * e + kd * ed) * tractionChange + ki * ei;
+  //value sent to speed control to modify speed. ki should always be active
+  tp = t;
+  ep = e;
+  return u;
 }
 
 int updatePID(float desiredVolts, float currentVolts) {
