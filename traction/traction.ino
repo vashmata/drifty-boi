@@ -65,6 +65,9 @@ void traction_control(){
   t = micros(); dt = t - tp;
 
   e = r - y;
+  if (fabs(e)<0.01){
+    e = 0;
+  }
   ei += e*T;
   ed = (e-ep)/dt;
   u = (kp*e + kd*ed)*tractionChange + ki*ei;
