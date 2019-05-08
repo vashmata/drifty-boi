@@ -4,9 +4,9 @@
 // voltage divider was measured to give 2.31 volts which matches calibration below, so it's not defined here
 
 #ifdef VOLTAGE_3v3_CONST
-#define A_TO_V VOLTAGE_3v3_CONST/1024.0
+const float A_TO_V = VOLTAGE_3v3_CONST/1024.0;
 #elif defined(VOLTAGE_5v_CONST)
-#define A_TO_V VOLTAGE_5v_CONST/1024.0
+const float A_TO_V = VOLTAGE_5v_CONST/1024.0;
 #endif
 
 #define AVERAGING_COUNTS 100
@@ -32,14 +32,14 @@ unsigned long driveTachSum; // sum of analogRead values, gets divided by AVERAGI
 int n = 0; // counter for averaging filter, counts up to AVERAGING_COUNTS
 
 void setup() {
+  /* comms setup */
+  Serial.begin(BAUD_RATE); Serial.setTimeout(SERIAL_TIMEOUT);
+  Serial.println(F("Front Nano has booted up"));
+
   /* pins setup */
   pinMode(DRIVE_TACH, INPUT);
   analogReference(EXTERNAL);
-
-  /* comms setup */
-  Serial.begin(BAUD_RATE); Serial.setTimeout(SERIAL_TIMEOUT);
-  Serial.println(F("Rear Nano has booted up"));
-
+  
   /* tachometer calibration */
   Serial.println(F("Calibrating drive tachometer"));
   prevAnalogRead = micros(); n = 0;
