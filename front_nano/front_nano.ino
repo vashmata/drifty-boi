@@ -8,6 +8,7 @@
 
 Servo steer;
 int angle;
+bool negative;
 
 void servoCallback();
 
@@ -27,11 +28,15 @@ void loop() {
 
 
 void servoCallback() {
-  if (Wire.available()) angle = Wire.read();
+  if (Wire.available()) {
+    negative = Wire.read();
+    angle = Wire.read();
+  }
   Serial.print("DESIRED ANGLE: ");
+  if (negative) Serial.print("-");
   Serial.println(angle);
   // enforce limits
   if (angle > SERVO_LIMIT) angle = SERVO_LIMIT;
-  else if (angle < -SERVO_LIMIT) angle = -SERVO_LIMIT;
+  if (negative) angle = -angle;
   steer.write(SERVO_OFFSET + angle);
 }
