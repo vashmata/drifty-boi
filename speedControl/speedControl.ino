@@ -55,17 +55,20 @@ int cmd[4] = {0, 0, 0, 0}; // [start, turbo, linear velocity, servo angle]
 const byte address[6] = "NODROG";
 RF24 radio(CE, CSN);
 
+bool isClosedLoop = false;
+bool isSlow = false;
+
 /* motor information */
 #define DRIVE_STOP 1500
-#define DRIVE_OFFSET 40
+#define DRIVE_OFFSET 100
 #define PID_PERIOD 20 // 20ms
-float speedMultiplier = 1.5;
+float speedMultiplier = 1.0;
 
 /* battery information */
 // battery voltage (V) -- assume constant for now
 const float V_bat = 11.5;
 const float V_bat_inv = 1 / V_bat;
-const float tachMax = 0.05;
+const float tachMax = 0.09;
 
 /* timing */
 unsigned long prevPrint = millis(); // for serial printing periodic data
@@ -180,18 +183,23 @@ void loop() {
     }
   }
   static float desiredVolts = 0;
-  // if boost mode, speedMultiplier = 3, else set it to 1
-  //desiredVolts = blabla; // take desired volts from higher level stuff
-
-  /* PID control */
+  
+  /* reducing speed for precise movements */
+  if(isSlow) speedMultiplier = 0.25;
+  else speedMultiplier = 1.0;
+  
+  /* speed control */
   static int driveSpeed = DRIVE_STOP;
   static float outputVolts = 0;
   if (start) {
-    desiredVolts = ((float)cmd[2]) * 0.0001; // max 1250 -> 0.1250 volts
+    desiredVolts = ((float)cmd[2]) * 0.0001; // max 900 -> 0.9 volts
     if (millis() - prevPID > PID_PERIOD) {
-      //driveSpeed = updatePID(driveTachVolts, desiredVolts);
-      int offset = (desiredVolts / tachMax) * DRIVE_OFFSET * speedMultiplier;
+      static int offset;
+	  if(isClosedLoop) offset = updatePID(driveTachVolts, desiredVolts);
+      else offset = (desiredVolts / tachMax) * speedMuliplier;
       if (offset!=0 && abs(offset)<45) offset = (offset/abs(offset))*45; // compensate for deadband
+	  if (offset<0) offset -= 30; // compensate for slower while reversing
+	  if (abs(offset) > DRIVE_OFFSET) offset = (offset/abs(offset))*DRIVE_OFFSET; // saturation
       driveSpeed = DRIVE_STOP + offset;
       drive.writeMicroseconds(driveSpeed);
       prevPID = millis();
@@ -241,15 +249,10 @@ int updatePID(float desiredVolts, float currentVolts) {
   prevError = error;
 
   outputVolts = pTerm + iTerm + dTerm; // PID controller
-  outputPulse = DRIVE_STOP + (outputVolts * V_bat_inv) * DRIVE_OFFSET * speedMultiplier;
-
-  // software saturation of inputs
-  int offset = DRIVE_OFFSET * speedMultiplier;
-  if (outputPulse > DRIVE_STOP + offset) outputPulse = DRIVE_STOP + offset;
-  if (outputPulse < DRIVE_STOP - offset) outputPulse = DRIVE_STOP - offset;
+  offset = (outputVolts * V_bat_inv)*speedMultiplier;
 
   tp = t;
-  return outputPulse; // return ESC pulse time
+  return offset; // return ESC pulse time
 }
 
 void setup_ADC() {
